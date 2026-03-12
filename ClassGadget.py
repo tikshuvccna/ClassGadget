@@ -23,6 +23,10 @@ except ImportError:
 # --- תיקיות והגדרות ---
 GIF_FOLDER = "gifs"; SOUND_FOLDER = "sounds"; RECORDINGS_FOLDER = "recordings"
 DISPLAY_TIME_MS = 4000; FIREWORK_DISPLAY_TIME_MS = 1500
+
+# צבע שקוף ייעודי (ורוד זוהר) כדי ששחור יחזור להיות צבע רקע נראה ופעיל לטקסט
+TRANSPARENT_COLOR = "#FF00FF" 
+
 for folder in [GIF_FOLDER, SOUND_FOLDER, RECORDINGS_FOLDER]:
     if not os.path.exists(folder): os.makedirs(folder)
 
@@ -105,7 +109,6 @@ class ClassGadgetApp:
         self.is_minimized = False
         
         self.normal_geometry = "840x700" 
-        
         self.hide_window_var = tk.BooleanVar(value=False)
 
         self.setup_zoomit_registry()
@@ -113,17 +116,30 @@ class ClassGadgetApp:
         self.build_ui()
 
     def setup_zoomit_registry(self):
+        """ הזרקת רג'יסטרי סופית, מושלמת ומדובגת! """
         if sys.platform == "win32":
-            try:
-                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\Sysinternals\ZoomIt")
-                winreg.SetValueEx(key, "EulaAccepted", 0, winreg.REG_DWORD, 1)
-                winreg.SetValueEx(key, "ToggleKey", 0, winreg.REG_DWORD, 0x07000077) # Ctrl+Alt+Shift+F8
-                winreg.SetValueEx(key, "DrawKey", 0, winreg.REG_DWORD, 0x07000078)   # Ctrl+Alt+Shift+F9
-                winreg.SetValueEx(key, "LiveZoomToggleKey", 0, winreg.REG_DWORD, 0x07000079) # Ctrl+Alt+Shift+F10
-                winreg.SetValueEx(key, "RecordToggleKey", 0, winreg.REG_DWORD, 0x0700007A) # Ctrl+Alt+Shift+F11
-                winreg.CloseKey(key)
-            except Exception as e:
-                print("Could not set ZoomIt registry keys:", e)
+            os.system("taskkill /f /im ZoomIt.exe >nul 2>&1")
+            os.system("taskkill /f /im ZoomIt64.exe >nul 2>&1")
+            
+            keys = {
+                "ToggleKey": 817,           # Ctrl+Shift+1 (זום)
+                "DrawToggleKey": 818,       # Ctrl+Shift+2 (ציור - זה המפתח האמיתי!)
+                "LiveZoomToggleKey": 819,   # Ctrl+Shift+3 (זום חי)
+                "LiveZoomKey": 819,
+                "RecordToggleKey": 820,     # Ctrl+Shift+4 (הקלטה)
+                "OptionsShown": 1,          # מונע קפיצת חלון הגדרות פעם ראשונה
+                "ShowTrayIcon": 1
+            }
+            
+            paths = [
+                r"HKCU\Software\Sysinternals\ZoomIt",
+                r"HKCU\Software\Sysinternals\ZoomIt64"
+            ]
+            
+            for path in paths:
+                os.system(f'reg add "{path}" /v EulaAccepted /t REG_DWORD /d 1 /f /reg:64 >nul 2>&1')
+                for val_name, val_num in keys.items():
+                    os.system(f'reg add "{path}" /v {val_name} /t REG_DWORD /d {val_num} /f /reg:64 >nul 2>&1')
 
     def T(self, he, en): return he if self.lang == "HE" else en
     
@@ -158,7 +174,7 @@ class ClassGadgetApp:
                 pass
 
     def build_ui(self):
-        self.root.title(self.T("ClassGadget - אולפן מתקדם v18.0", "ClassGadget - Advanced Studio v18.0"))
+        self.root.title(self.T("ClassGadget - אולפן מתקדם v22.0", "ClassGadget - Advanced Studio v22.0"))
         self.root.geometry(self.normal_geometry); self.root.attributes("-topmost", self.always_on_top_var.get()) 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
@@ -225,7 +241,6 @@ class ClassGadgetApp:
     def on_closing(self):
         try: pygame.mixer.quit()
         except: pass
-        # סגירת ZoomIt כדי שלא יישאר פעיל ברקע
         if sys.platform == "win32":
             os.system("taskkill /f /im ZoomIt.exe >nul 2>&1")
             os.system("taskkill /f /im ZoomIt64.exe >nul 2>&1")
@@ -387,17 +402,19 @@ class ClassGadgetApp:
             tk.Button(acts, text="✖️ יציאה / בטל", font=("Arial", 11, "bold"), bg="#E74C3C", fg="white", width=12, command=self.cancel_zoomit).grid(row=0, column=0, padx=5)
             tk.Label(acts, text="(Esc)", font=("Arial", 9), fg="gray").grid(row=1, column=0)
 
-            tk.Button(acts, text="🎥 זום חי", font=("Arial", 11, "bold"), bg="#E67E22", width=12, command=lambda: self.run_zoomit('live')).grid(row=0, column=2, padx=5)
-            tk.Label(acts, text="(Ctrl+4)", font=("Arial", 9), fg="gray").grid(row=1, column=2)
+            tk.Button(acts, text="🎥 זום חי", font=("Arial", 11, "bold"), bg="#E67E22", width=12, command=lambda: self.run_zoomit('live')).grid(row=0, column=1, padx=5)
+            tk.Label(acts, text="(Ctrl+Shift+3)", font=("Arial", 9), fg="gray").grid(row=1, column=1)
 
-            tk.Button(acts, text="🖌️ מצב ציור", font=("Arial", 11, "bold"), bg="#F1C40F", width=12, command=lambda: self.run_zoomit('draw')).grid(row=0, column=3, padx=5)
-            tk.Label(acts, text="(Ctrl+2)", font=("Arial", 9), fg="gray").grid(row=1, column=3)
+            tk.Button(acts, text="🖌️ מצב ציור", font=("Arial", 11, "bold"), bg="#F1C40F", width=12, command=lambda: self.run_zoomit('draw')).grid(row=0, column=2, padx=5)
+            tk.Label(acts, text="(Ctrl+Shift+2)", font=("Arial", 9), fg="gray").grid(row=1, column=2)
 
-            tk.Button(acts, text="🔍 הפעל זום", font=("Arial", 11, "bold"), bg="#2ECC71", width=12, command=lambda: self.run_zoomit('zoom')).grid(row=0, column=4, padx=5)
-            tk.Label(acts, text="(Ctrl+1)", font=("Arial", 9), fg="gray").grid(row=1, column=4)
+            tk.Button(acts, text="🔍 הפעל זום", font=("Arial", 11, "bold"), bg="#2ECC71", width=12, command=lambda: self.run_zoomit('zoom')).grid(row=0, column=3, padx=5)
+            tk.Label(acts, text="(Ctrl+Shift+1)", font=("Arial", 9), fg="gray").grid(row=1, column=3)
 
             tk.Label(zi_frame, text="🔴 ליציאה ממצב זום או ציור – לחצו על מקש ה- ESC במקלדת! 🔴", font=("Arial", 14, "bold"), fg="#C0392B", bg="#FADBD8", pady=5).pack(fill=tk.X, pady=10)
             
+            tk.Label(zi_frame, text="💡 טיפ: כדי לצייר על המסך בזמן 'זום חי', לחצו במקלדת על הקיצור Ctrl+Shift+2", font=("Arial", 11, "bold"), fg="blue").pack(pady=(0, 10))
+
             tk.Label(zi_frame, text="קיצורי דרך למצב ציור:", font=("Arial", 12, "bold", "underline")).pack(pady=5)
             shortcuts = [
                 ("מלבן:", "לחיצה ארוכה על Ctrl + גרירת עכבר"),
@@ -415,18 +432,22 @@ class ClassGadgetApp:
 
     def take_full_screenshot(self):
         try:
+            target = self.get_target_monitor()
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             filename = os.path.join(RECORDINGS_FOLDER, f"Screenshot_{timestamp}.png")
-            img = ImageGrab.grab(all_screens=True)
+            
+            img = ImageGrab.grab(bbox=(target.x, target.y, target.x + target.width, target.y + target.height), all_screens=True)
             img.save(filename)
             self.play_sound("applause")
-            self.show_quiet_notification(f"המסך צולם ונשמר בתיקייה!")
+            self.show_quiet_notification(f"מסך המצגת צולם ונשמר בתיקייה!")
         except Exception as e:
             messagebox.showerror("שגיאה", f"שגיאה בצילום המסך:\n{e}")
 
     def start_custom_snip(self):
+        target = self.get_target_monitor()
         self.snip_win = tk.Toplevel(self.root)
-        self.snip_win.attributes("-fullscreen", True)
+        self.snip_win.overrideredirect(True)
+        self.snip_win.geometry(f'{target.width}x{target.height}+{target.x}+{target.y}')
         self.snip_win.attributes("-alpha", 0.3)
         self.snip_win.attributes("-topmost", True)
         self.snip_win.config(cursor="crosshair", bg="black")
@@ -444,6 +465,8 @@ class ClassGadgetApp:
         self.snip_win.bind("<Escape>", lambda e: self.snip_win.destroy())
         
         self.snip_win.focus_force()
+        if sys.platform == "win32":
+            ctypes.windll.user32.SetCursorPos(int(target.x + target.width//2), int(target.y + target.height//2))
 
     def on_snip_press(self, event):
         self.snip_start_x = event.x
@@ -458,17 +481,18 @@ class ClassGadgetApp:
         end_x, end_y = (event.x, event.y)
         self.snip_win.destroy()
         
-        x1 = min(self.snip_start_x, end_x)
-        y1 = min(self.snip_start_y, end_y)
-        x2 = max(self.snip_start_x, end_x)
-        y2 = max(self.snip_start_y, end_y)
+        target = self.get_target_monitor()
+        x1 = min(self.snip_start_x, end_x) + target.x
+        y1 = min(self.snip_start_y, end_y) + target.y
+        x2 = max(self.snip_start_x, end_x) + target.x
+        y2 = max(self.snip_start_y, end_y) + target.y
         
         if x2 - x1 > 10 and y2 - y1 > 10:
             self.root.after(100, lambda: self.save_snip(x1, y1, x2, y2))
 
     def save_snip(self, x1, y1, x2, y2):
         try:
-            img = ImageGrab.grab(bbox=(x1, y1, x2, y2))
+            img = ImageGrab.grab(bbox=(x1, y1, x2, y2), all_screens=True)
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             filename = os.path.join(RECORDINGS_FOLDER, f"Snip_{timestamp}.png")
             img.save(filename)
@@ -495,26 +519,69 @@ class ClassGadgetApp:
             return True
         return False
 
+    def show_live_zoom_stop_button(self, target):
+        if hasattr(self, 'live_zoom_btn_win') and self.live_zoom_btn_win.winfo_exists():
+            self.live_zoom_btn_win.destroy()
+            
+        self.live_zoom_btn_win = tk.Toplevel(self.root)
+        self.live_zoom_btn_win.overrideredirect(True) 
+        self.live_zoom_btn_win.attributes("-topmost", True) 
+        
+        btn = tk.Button(self.live_zoom_btn_win, text="⏹️ כיבוי זום חי (Live Zoom)", 
+                        font=("Arial", 16, "bold"), bg="#E74C3C", fg="white", 
+                        bd=4, relief="raised", cursor="hand2",
+                        command=self.stop_live_zoom_from_btn)
+        btn.pack(ipadx=20, ipady=10)
+        
+        self.live_zoom_btn_win.update_idletasks()
+        w = self.live_zoom_btn_win.winfo_reqwidth()
+        h = self.live_zoom_btn_win.winfo_reqheight()
+        
+        x = target.x + (target.width // 2) - (w // 2)
+        y = target.y + 10 
+        self.live_zoom_btn_win.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
+
+    def stop_live_zoom_from_btn(self):
+        keyboard.send("ctrl+shift+3") 
+        if hasattr(self, 'live_zoom_btn_win') and self.live_zoom_btn_win.winfo_exists():
+            self.live_zoom_btn_win.destroy()
+
     def run_zoomit(self, mode):
         if not os.path.exists("ZoomIt.exe"): return
         
+        target = self.get_target_monitor()
+        center_x = target.x + (target.width // 2)
+        center_y = target.y + (target.height // 2)
+        if sys.platform == "win32":
+            ctypes.windll.user32.SetCursorPos(int(center_x), int(center_y))
+        
         was_just_started = self.ensure_zoomit_running()
         
-        hotkeys = {
-            "zoom": "ctrl+alt+shift+f8",
-            "draw": "ctrl+alt+shift+f9",
-            "live": "ctrl+alt+shift+f10",
-            "record": "ctrl+alt+shift+f11"
-        }
         if mode == "record":
             self.show_quiet_notification("הקלטת וידאו מופעלת/נעצרת. בסיום תתבקש לבחור היכן לשמור.", 4000)
             
         delay = 1000 if was_just_started else 100
-        self.root.after(delay, lambda: keyboard.send(hotkeys[mode]))
+        
+        def execute_zoomit_action():
+            hotkeys = {
+                "zoom": "ctrl+shift+1",
+                "draw": "ctrl+shift+2", 
+                "live": "ctrl+shift+3",
+                "record": "ctrl+shift+4"
+            }
+            keyboard.send(hotkeys[mode])
+            
+            if mode == "live":
+                self.show_live_zoom_stop_button(target)
+                
+        self.root.after(delay, execute_zoomit_action)
 
     def cancel_zoomit(self):
-        keyboard.send("escape")
-        keyboard.send("ctrl+alt+shift+f10")
+        keyboard.send("escape") 
+        keyboard.send("ctrl+shift+3") 
+        
+        if hasattr(self, 'live_zoom_btn_win') and self.live_zoom_btn_win.winfo_exists():
+            self.live_zoom_btn_win.destroy()
 
     def build_sounds_tab(self):
         ttk.Button(self.tab_sounds, text=self.T("➕ העלה סאונד", "➕ Upload Sound"), command=lambda: self.add_custom_media("sfx")).pack(pady=5)
@@ -619,28 +686,49 @@ class ClassGadgetApp:
             else: self.stop_msgs(); return
             
         m = self.messages_queue[self.current_msg_idx]
-        self.msg_popup = tk.Toplevel(self.root); self.msg_popup.overrideredirect(True); self.msg_popup.attributes("-topmost", True)
+        self.msg_popup = tk.Toplevel(self.root)
+        self.msg_popup.overrideredirect(True)
+        self.msg_popup.attributes("-topmost", True)
         
         bg_col = m["bg"]
-        if m["full_width"]: self.msg_popup.config(bg=bg_col)
-        else: self.msg_popup.attributes("-transparentcolor", "black"); self.msg_popup.config(bg="black"); bg_col = "black" if bg_col == "black" else bg_col
+        if m["full_width"]: 
+            self.msg_popup.config(bg=bg_col)
+        else: 
+            self.msg_popup.attributes("-transparentcolor", TRANSPARENT_COLOR)
+            self.msg_popup.config(bg=TRANSPARENT_COLOR)
+            bg_col = TRANSPARENT_COLOR if bg_col == TRANSPARENT_COLOR else bg_col
             
         target = self.get_target_monitor()
-        self.msg_label = tk.Label(self.msg_popup, text=m["text"], font=("Arial", m["size"], "bold"), fg=m["colors"][0], bg=m["bg"])
-        self.msg_label.pack(fill=tk.Y if m["full_width"] else tk.NONE); self.msg_popup.update_idletasks()
+        self.msg_label = tk.Label(self.msg_popup, text=m["text"], font=("Arial", m["size"], "bold"), fg=m["colors"][0], bg=bg_col)
         
-        w, h = self.msg_popup.winfo_width(), self.msg_popup.winfo_height()
+        req_w = self.msg_label.winfo_reqwidth()
+        req_h = self.msg_label.winfo_reqheight()
+        h = req_h
+        
         y = target.y + 50 if m["loc"] == "למעלה" else (target.y + (target.height/2) - (h/2) if m["loc"] == "מרכז" else target.y + target.height - h - 50)
-        t_ms = m["time"] * 1000; self.color_idx = 0
+        t_ms = m["time"] * 1000
+        self.color_idx = 0
         
         if m["type"] == "נגלל":
-            win_w = target.width if m["full_width"] else target.width
-            self.msg_popup.geometry(f'{win_w}x{h}+{target.x}+{int(y)}'); self.msg_x = target.width; self.msg_label.place(x=self.msg_x, y=0); self.anim_scroll(target.width, t_ms, m)
+            win_w = target.width
+            self.msg_popup.geometry(f'{win_w}x{h}+{target.x}+{int(y)}')
+            self.msg_x = win_w
+            self.msg_label.place(x=self.msg_x, rely=0.5, anchor="w")
+            self.anim_scroll(win_w, t_ms, m)
         elif m["type"] == "סטטי":
-            win_w = target.width if m["full_width"] else w
-            x_pos = target.x if m["full_width"] else target.x + (target.width/2) - (w/2)
-            self.msg_popup.geometry(f'{win_w}x{h}+{int(x_pos)}+{int(y)}'); self.msg_label.pack(expand=True); self.anim_static(t_ms, m)
-        elif m["type"] == "קופץ": self.anim_jump(target, w, h, t_ms, m)
+            win_w = target.width if m["full_width"] else req_w
+            x_pos = target.x if m["full_width"] else target.x + (target.width/2) - (req_w/2)
+            self.msg_popup.geometry(f'{win_w}x{h}+{int(x_pos)}+{int(y)}')
+            if m["full_width"]:
+                self.msg_label.place(relx=0.5, rely=0.5, anchor="center")
+            else:
+                self.msg_label.pack(expand=True)
+            self.anim_static(t_ms, m)
+        elif m["type"] == "קופץ":
+            self.msg_label.pack()
+            self.msg_popup.update_idletasks()
+            w, h = self.msg_popup.winfo_width(), self.msg_popup.winfo_height()
+            self.anim_jump(target, w, h, t_ms, m)
 
     def next_msg(self, m):
         if m["loop"]: self.show_msg()
@@ -653,8 +741,9 @@ class ClassGadgetApp:
 
     def anim_scroll(self, w, t, m):
         if not self.is_playing_messages or not self.msg_popup.winfo_exists(): return
-        self.msg_x -= 8; self.msg_label.place(x=self.msg_x, y=0)
-        if self.msg_x % 160 == 0: self.update_msg_color(m)
+        self.msg_x -= 10
+        self.msg_label.place(x=self.msg_x, rely=0.5, anchor="w")
+        if self.msg_x % 150 < 10: self.update_msg_color(m)
         if self.msg_x < -self.msg_label.winfo_reqwidth():
             if not m["loop"] and t <= 0: self.next_msg(m); return
             self.msg_x = w
@@ -685,8 +774,10 @@ class ClassGadgetApp:
         fn = self.load_students_from_file(); self.roulette_names = fn if fn else [n.strip() for n in self.roulette_names_var.get().split(',') if n.strip()]
         if len(self.roulette_names) < 2: return
         if self.roulette_popup and self.roulette_popup.winfo_exists(): self.roulette_popup.destroy()
-        self.roulette_popup = tk.Toplevel(self.root); self.roulette_popup.overrideredirect(True); self.roulette_popup.attributes("-topmost", True); self.roulette_popup.attributes("-transparentcolor", "black"); self.roulette_popup.config(bg="black")
-        self.roulette_label = tk.Label(self.roulette_popup, text="🎲 מערבב...", font=("Arial", 70, "bold"), fg="#00FFFF", bg="black"); self.roulette_label.pack(pady=20, padx=20)
+        self.roulette_popup = tk.Toplevel(self.root); self.roulette_popup.overrideredirect(True); self.roulette_popup.attributes("-topmost", True)
+        self.roulette_popup.attributes("-transparentcolor", TRANSPARENT_COLOR); self.roulette_popup.config(bg=TRANSPARENT_COLOR)
+        
+        self.roulette_label = tk.Label(self.roulette_popup, text="🎲 מערבב...", font=("Arial", 70, "bold"), fg="#00FFFF", bg=TRANSPARENT_COLOR); self.roulette_label.pack(pady=20, padx=20)
         self.roulette_popup.update_idletasks(); t = self.get_target_monitor(); w, h = self.roulette_popup.winfo_width(), self.roulette_popup.winfo_height(); self.roulette_popup.geometry(f'+{int(t.x + (t.width/2) - (w/2))}+{int(t.y + (t.height/2) - (h/2))}')
         self.play_sound("drumroll")
         self.roulette_ticks = 0; self.roulette_delay = 50; self.spin_roulette()
@@ -1309,12 +1400,15 @@ class ClassGadgetApp:
                 self.fs_by += self.fs_bounce_dy
                 if self.fs_bx > target.width - 200 or self.fs_bx < 200: self.fs_bounce_dx *= -1
                 if self.fs_by > target.height - 100 or self.fs_by < 100: self.fs_bounce_dy *= -1
-                self.fs_main_frame.place(x=self.fs_bx, y=self.fs_by, anchor="center")
+                self.fs_main_frame.place(x=self.fs_bx, y=self.fs_by, relx=0.0, rely=0.0, anchor="center")
             elif anim_type == "טיקר זז":
                 if not hasattr(self, 'fs_ticker_x'): self.fs_ticker_x = target.width
-                self.fs_ticker_x -= 5
-                if self.fs_ticker_x < -500: self.fs_ticker_x = target.width
-                self.fs_main_frame.place(x=self.fs_ticker_x, rely=0.5, anchor="w")
+                self.fs_ticker_x -= 8 
+                
+                req_w = self.fs_main_frame.winfo_reqwidth()
+                if self.fs_ticker_x < -req_w: self.fs_ticker_x = target.width
+                
+                self.fs_main_frame.place(x=self.fs_ticker_x, relx=0.0, rely=0.5, anchor="w")
 
         if self.fs_effect_var.get() == "קונפטי ובלונים":
             if not hasattr(self, 'fs_particles'): self.fs_particles = []
@@ -1385,8 +1479,10 @@ class ClassGadgetApp:
         if vf: self.trigger_fireworks(random.choice(vf), play_sound_flag)
         
     def get_target_monitor(self): return self.monitors[self.monitor_names.index(self.selected_monitor_var.get())]
+    
     def create_base_popup(self):
-        p = tk.Toplevel(self.root); p.overrideredirect(True); p.attributes("-topmost", True); p.attributes("-transparentcolor", "black"); p.config(bg="black"); return p
+        p = tk.Toplevel(self.root); p.overrideredirect(True); p.attributes("-topmost", True)
+        p.attributes("-transparentcolor", TRANSPARENT_COLOR); p.config(bg=TRANSPARENT_COLOR); return p
     
     def trigger_fireworks(self, specific_filename="firework.gif", play_sound_flag=True):
         for p in self.firework_popups:
@@ -1398,7 +1494,7 @@ class ClassGadgetApp:
             self.play_sound("fireworks")
             
         for _ in range(10):
-            p = self.create_base_popup(); self.firework_popups.append(p); AnimatedGif(p, gif_path, bg="black").pack(); p.update_idletasks(); w, h = p.winfo_width(), p.winfo_height()
+            p = self.create_base_popup(); self.firework_popups.append(p); AnimatedGif(p, gif_path, bg=TRANSPARENT_COLOR).pack(); p.update_idletasks(); w, h = p.winfo_width(), p.winfo_height()
             p.geometry('%dx%d+%d+%d' % (w, h, t.x + random.randint(0, t.width - w), t.y + random.randint(0, t.height - h)))
         self.root.after(FIREWORK_DISPLAY_TIME_MS, lambda: [p.destroy() for p in self.firework_popups if p.winfo_exists()])
     
@@ -1413,7 +1509,7 @@ class ClassGadgetApp:
         if self.popup and self.popup.winfo_exists(): self.popup.destroy()
         self.popup = self.create_base_popup()
         
-        gif_lbl = AnimatedGif(self.popup, fp, bg="black")
+        gif_lbl = AnimatedGif(self.popup, fp, bg=TRANSPARENT_COLOR)
         gif_lbl.pack()
         
         txt = self.gif_text_var.get().strip()
@@ -1437,6 +1533,7 @@ class ClassGadgetApp:
         nx, ny = cx + sx, cy + sy; self.popup.geometry('%dx%d+%d+%d' % (w, h, int(nx), int(ny)))
         self.root.after(15, lambda: self.animate_window(nx, ny, tx, ty, w, h, sx, sy))
 
+# תיקון DPI חובה לפני יצירת החלון הראשי כדי שהחיתוך יעבוד על כל המסך
 if sys.platform == "win32":
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
