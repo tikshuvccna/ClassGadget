@@ -1,0 +1,20 @@
+# Environments
+venv/
+env/
+.env
+
+# PyInstaller folders and files
+build/
+dist/
+*.spec
+
+# User generated files (Prevent uploading private screenshots/videos)
+recordings/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS generated files
+.DS_Store
+Thumbs.db
