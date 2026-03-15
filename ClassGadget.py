@@ -14,6 +14,15 @@ import webbrowser
 import winreg
 import ctypes
 
+# === תיקון DPI מוקדם - חובה לפני הפעלת Tkinter ===
+if sys.platform == "win32":
+    try: ctypes.windll.shcore.SetProcessDpiAwareness(2) # Per Monitor v2
+    except Exception:
+        try: ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except Exception:
+            try: ctypes.windll.user32.SetProcessDPIAware()
+            except Exception: pass
+
 try:
     import openpyxl
     HAS_OPENPYXL = True
@@ -438,7 +447,6 @@ class ClassGadgetApp:
             
             acts = tk.Frame(zi_frame); acts.pack(pady=10)
             
-            # סידור הלחצנים מימין לשמאל: הפעל זום -> ציור -> זום חי -> ביטול
             f_zoom = tk.Frame(acts); f_zoom.pack(side=align_side, padx=5)
             tk.Button(f_zoom, text=self.T("🔍 הפעל זום", "🔍 Zoom In"), font=("Arial", 11, "bold"), bg="#2ECC71", width=12, command=lambda: self.run_zoomit('zoom')).pack()
             tk.Label(f_zoom, text="(Ctrl+Shift+1)", font=("Arial", 9, "bold"), fg="gray").pack()
@@ -557,6 +565,7 @@ class ClassGadgetApp:
         btn = tk.Button(self.live_zoom_btn_win, text=self.T("⏹️ כיבוי זום חי", "⏹️ Stop Live Zoom"), font=("Arial", 16, "bold"), bg="#E74C3C", fg="white", bd=4, relief="raised", cursor="hand2", command=self.stop_live_zoom_from_btn)
         btn.pack(ipadx=20, ipady=10)
         self.live_zoom_btn_win.update_idletasks()
+        self.live_zoom_btn_win.update()
         w, h = self.live_zoom_btn_win.winfo_reqwidth(), self.live_zoom_btn_win.winfo_reqheight()
         self.live_zoom_btn_win.geometry(f"{w}x{h}+{int(target.x + (target.width // 2) - (w // 2))}+{int(target.y + 10)}")
 
@@ -712,6 +721,10 @@ class ClassGadgetApp:
         target = self.get_target_monitor()
         self.msg_label = tk.Label(self.msg_popup, text=m["text"], font=("Arial", m["size"], "bold"), fg=m["colors"][0], bg=bg_col)
         
+        self.msg_label.pack() 
+        self.msg_popup.update_idletasks()
+        self.msg_popup.update()
+        
         req_w = self.msg_label.winfo_reqwidth()
         req_h = self.msg_label.winfo_reqheight()
         h = req_h
@@ -733,13 +746,11 @@ class ClassGadgetApp:
             x_pos = target.x if m["full_width"] else target.x + (target.width/2) - (req_w/2)
             self.msg_popup.geometry(f'{win_w}x{h}+{int(x_pos)}+{int(y)}')
             if m["full_width"]: self.msg_label.place(relx=0.5, rely=0.5, anchor="center")
-            else: self.msg_label.pack(expand=True)
+            else: self.msg_label.place(relx=0.5, rely=0.5, anchor="center") 
             self.anim_static(t_ms, m)
         else:
-            self.msg_label.pack()
-            self.msg_popup.update_idletasks()
-            w, h = self.msg_popup.winfo_width(), self.msg_popup.winfo_height()
-            self.anim_jump(target, w, h, t_ms, m)
+            self.msg_popup.geometry(f'{req_w}x{req_h}+{int(target.x + random.randint(0, max(1, target.width - req_w)))}+{int(target.y + random.randint(0, max(1, target.height - req_h)))}')
+            self.anim_jump(target, req_w, req_h, t_ms, m)
 
     def next_msg(self, m):
         if m["loop"]: self.show_msg()
@@ -789,7 +800,10 @@ class ClassGadgetApp:
         self.roulette_popup.attributes("-transparentcolor", TRANSPARENT_COLOR); self.roulette_popup.config(bg=TRANSPARENT_COLOR)
         
         self.roulette_label = tk.Label(self.roulette_popup, text="🎲 מערבב...", font=("Arial", 70, "bold"), fg="#00FFFF", bg=TRANSPARENT_COLOR); self.roulette_label.pack(pady=20, padx=20)
-        self.roulette_popup.update_idletasks(); t = self.get_target_monitor(); w, h = self.roulette_popup.winfo_width(), self.roulette_popup.winfo_height(); self.roulette_popup.geometry(f'+{int(t.x + (t.width/2) - (w/2))}+{int(t.y + (t.height/2) - (h/2))}')
+        self.roulette_popup.update_idletasks()
+        self.roulette_popup.update()
+        t = self.get_target_monitor(); w, h = self.roulette_popup.winfo_reqwidth(), self.roulette_popup.winfo_reqheight()
+        self.roulette_popup.geometry(f'+{int(t.x + (t.width/2) - (w/2))}+{int(t.y + (t.height/2) - (h/2))}')
         self.play_sound("drumroll")
         self.roulette_ticks = 0; self.roulette_delay = 50; self.spin_roulette()
         
@@ -974,16 +988,11 @@ class ClassGadgetApp:
         self.update_hm_ui()
 
     def update_hm_ui(self):
-        # זיהוי שפה: עברית או אנגלית
         is_hebrew = any('\u0590' <= c <= '\u05FF' for c in self.hangman_word)
-        
-        # שימוש בריבועים למניעת בלבול קווים תחתונים
         display_chars = [c if c in self.hangman_guesses else "⬜" for c in self.hangman_word]
         
-        if is_hebrew:
-            display_str = "\u200F" + "".join(display_chars) # RLM 
-        else:
-            display_str = "".join(display_chars)
+        if is_hebrew: display_str = "\u200F" + "".join(display_chars) # RLM 
+        else: display_str = "".join(display_chars)
             
         self.hm_word_label.config(text=display_str)
         
@@ -994,10 +1003,8 @@ class ClassGadgetApp:
         empty = self.T("טרם", "None")
         guessed_text = prefix + (", ".join(guessed_list) if guessed_list else empty)
         
-        if is_hebrew:
-            self.hm_guessed_label.config(text="\u200F" + guessed_text)
-        else:
-            self.hm_guessed_label.config(text=guessed_text)
+        if is_hebrew: self.hm_guessed_label.config(text="\u200F" + guessed_text)
+        else: self.hm_guessed_label.config(text=guessed_text)
         
         stages = ["\n\n\n\n\n____", "\n |\n |\n |\n |\n_|_", " ____\n |/\n |\n |\n |\n_|_", " ____\n |/  |\n |\n |\n |\n_|_", " ____\n |/  |\n |   O\n |\n |\n_|_", " ____\n |/  |\n |   O\n |  /|\\\n |\n_|_", " ____\n |/  |\n |   O\n |  /|\\\n |  / \\\n_|_"]
         self.hm_drawing_label.config(text=stages[self.hangman_mistakes])
@@ -1223,7 +1230,7 @@ class ClassGadgetApp:
         tk.Label(notif, text=message, font=("Arial", 12, "bold"), bg="#2ECC71", fg="white", padx=20, pady=10).pack()
         
         notif.update_idletasks()
-        w, h = notif.winfo_width(), notif.winfo_height()
+        w, h = notif.winfo_reqwidth(), notif.winfo_reqheight()
         x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (w // 2)
         y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (h // 2)
         notif.geometry(f"+{x}+{y}")
@@ -1285,7 +1292,7 @@ class ClassGadgetApp:
         tk.Label(yt_frame, text=self.T("למדריך המלא צפו בסרטון:\u200F", "For the full guide watch:\u200F"), font=("Arial", 13, "bold")).pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT, padx=5)
         link_yt = tk.Label(yt_frame, text=self.T("▶️ לחצו כאן", "▶️ Click Here"), font=("Arial", 13, "underline"), fg="red", cursor="hand2")
         link_yt.pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT)
-        link_yt.bind("<Button-1>", lambda e: webbrowser.open_new("https://www.youtube.com/channel/UCyGJNVqqCu-aO_lCQWo5XMw")) 
+        link_yt.bind("<Button-1>", lambda e: webbrowser.open_new("https://youtu.be/nVqI16Q7KBo")) 
 
     # --- מסכי המתנה ---
     def build_fullscreen_tab(self):
@@ -1459,17 +1466,22 @@ class ClassGadgetApp:
         else: self.fs_timer_label.config(text="00:00", fg="#FF4500"); self.play_sound("alarm")
 
     def close_fullscreen(self):
+        pygame.mixer.music.stop()
         if self.fs_popup and self.fs_popup.winfo_exists():
-            if self.fs_timer_job: self.root.after_cancel(self.fs_timer_job)
-            for job in self.fs_anim_jobs: self.root.after_cancel(job)
-            self.fs_anim_jobs.clear()
-            if hasattr(self, 'fs_particles'):
-                for p in self.fs_particles: p["lbl"].destroy()
-                self.fs_particles.clear()
-            if hasattr(self, 'fs_bounce_dx'): del self.fs_bounce_dx
-            if hasattr(self, 'fs_ticker_x'): del self.fs_ticker_x
-            self.fs_popup.destroy()
-            pygame.mixer.music.stop()
+            try:
+                if self.fs_timer_job: self.root.after_cancel(self.fs_timer_job)
+                for job in self.fs_anim_jobs: self.root.after_cancel(job)
+                self.fs_anim_jobs.clear()
+                if hasattr(self, 'fs_particles'):
+                    for p in self.fs_particles: 
+                        try: p["lbl"].destroy()
+                        except: pass
+                    self.fs_particles.clear()
+                if hasattr(self, 'fs_bounce_dx'): del self.fs_bounce_dx
+                if hasattr(self, 'fs_ticker_x'): del self.fs_ticker_x
+            except: pass
+            finally:
+                self.fs_popup.destroy()
 
     # --- אודיו מתקדם ---
     def find_audio_file(self, basename):
@@ -1515,11 +1527,15 @@ class ClassGadgetApp:
             
         for _ in range(10):
             p = self.create_base_popup()
-            if dur_sec == 0: self.make_draggable(p)
-            else: p.bind("<Button-1>", lambda e: self.close_all_fireworks())
+            if dur_sec != 0: p.bind("<Button-1>", lambda e: self.close_all_fireworks())
             
-            self.firework_popups.append(p); AnimatedGif(p, gif_path, bg=TRANSPARENT_COLOR).pack(); p.update_idletasks(); w, h = p.winfo_width(), p.winfo_height()
-            p.geometry('%dx%d+%d+%d' % (w, h, t.x + random.randint(0, t.width - w), t.y + random.randint(0, t.height - h)))
+            self.firework_popups.append(p); AnimatedGif(p, gif_path, bg=TRANSPARENT_COLOR).pack()
+            p.update_idletasks()
+            p.update()
+            w, h = p.winfo_reqwidth(), p.winfo_reqheight()
+            p.geometry('%dx%d+%d+%d' % (w, h, t.x + random.randint(0, max(1, t.width - w)), t.y + random.randint(0, max(1, t.height - h))))
+            
+            if dur_sec == 0: self.make_draggable(p)
             
         if dur_sec > 0: self.root.after(int(dur_sec * 1000), self.close_all_fireworks)
 
@@ -1542,6 +1558,7 @@ class ClassGadgetApp:
             
         close_btn = tk.Button(window, text="❌", font=("Arial", 10), bg="#E74C3C", fg="white", bd=0, command=close_win, cursor="hand2")
         close_btn.place(relx=1.0, rely=0.0, anchor="ne")
+        close_btn.lift() 
             
         for w in [window] + window.winfo_children():
             if w == close_btn: continue
@@ -1585,7 +1602,8 @@ class ClassGadgetApp:
             txt_lbl.pack(side=tk.BOTTOM, fill=tk.X)
 
         p.update_idletasks()
-        w, h = p.winfo_width(), p.winfo_height(); t = self.get_target_monitor()
+        p.update()
+        w, h = p.winfo_reqwidth(), p.winfo_reqheight(); t = self.get_target_monitor()
         
         if effect == "center": 
             p.geometry('%dx%d+%d+%d' % (w, h, int(t.x + (t.width / 2) - (w / 2)), int(t.y + (t.height / 2) - (h / 2))))
@@ -1610,13 +1628,6 @@ class ClassGadgetApp:
             if (sy > 0 and cy >= ty) or (sy < 0 and cy <= ty) or sy == 0: return 
         nx, ny = cx + sx, cy + sy; window.geometry('%dx%d+%d+%d' % (w, h, int(nx), int(ny)))
         self.root.after(15, lambda: self.animate_window(window, nx, ny, tx, ty, w, h, sx, sy))
-
-# תיקון DPI
-if sys.platform == "win32":
-    try: ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        try: ctypes.windll.user32.SetProcessDPIAware()
-        except Exception: pass
 
 if __name__ == "__main__":
     root = tk.Tk()
