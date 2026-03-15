@@ -286,6 +286,39 @@ class ClassGadgetApp:
                 if os.path.exists(p): os.remove(p)
                 self.custom_sfx.remove(fn); self.refresh_custom_sfx_ui()
 
+    def paste_image_from_clipboard(self):
+        try:
+            img = ImageGrab.grabclipboard()
+            if img is None:
+                self.show_quiet_notification(self.T("❌ אין תמונה או קובץ בלוח ההעתקה", "❌ No image found in clipboard"), 2500)
+                return
+            
+            # אם המשתמש העתיק קובץ ממש (למשל מתיקייה)
+            if isinstance(img, list):
+                added = False
+                for path in img:
+                    if path.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
+                        shutil.copy(path, os.path.join(GIF_FOLDER, os.path.basename(path)))
+                        added = True
+                if added:
+                    self.refresh_custom_gifs_ui()
+                    self.show_quiet_notification(self.T("✅ הקבצים הודבקו בהצלחה!", "✅ Files pasted successfully!"))
+                else:
+                    self.show_quiet_notification(self.T("❌ לא נמצאו קבצי תמונה נתמכים", "❌ No supported images found"), 2500)
+                return
+
+            # אם המשתמש העתיק תמונה טהורה (למשל מהדפדפן)
+            timestamp = datetime.datetime.now().strftime("%H%M%S")
+            filename = f"Paste_{timestamp}.png"
+            filepath = os.path.join(GIF_FOLDER, filename)
+            
+            img.save(filepath, "PNG")
+            self.refresh_custom_gifs_ui()
+            self.show_quiet_notification(self.T(f"✅ התמונה נשמרה בהצלחה!", f"✅ Saved as {filename}"))
+            
+        except Exception as e:
+            messagebox.showerror(self.T("שגיאה", "Error"), f"Error:\n{e}")
+
     def get_sound_toggle(self, key):
         if key not in self.audio_toggles: self.audio_toggles[key] = tk.BooleanVar(value=True)
         return self.audio_toggles[key]
@@ -325,7 +358,12 @@ class ClassGadgetApp:
 
     # --- גיפים ותמונות ---
     def build_regular_tab(self):
-        ttk.Button(self.tab_regular, text=self.T("➕ העלה תמונה/GIF", "➕ Upload Image/GIF"), command=lambda: self.add_custom_media("gif")).pack(pady=5)
+        top_btns_f = tk.Frame(self.tab_regular)
+        top_btns_f.pack(pady=5)
+        align = tk.RIGHT if self.lang == "HE" else tk.LEFT
+        ttk.Button(top_btns_f, text=self.T("➕ העלה קובץ", "➕ Upload File"), command=lambda: self.add_custom_media("gif")).pack(side=align, padx=5)
+        ttk.Button(top_btns_f, text=self.T("📋 הדבק מהלוח", "📋 Paste (Clipboard)"), command=self.paste_image_from_clipboard).pack(side=align, padx=5)
+
         for name, (pref, hk) in REGULAR_GIFS.items():
             if pref not in self.media_durations: self.media_durations[pref] = tk.StringVar(value="")
             f = tk.Frame(self.tab_regular); f.pack(fill=tk.X, pady=2, padx=10)
@@ -1292,7 +1330,7 @@ class ClassGadgetApp:
         tk.Label(yt_frame, text=self.T("למדריך המלא צפו בסרטון:\u200F", "For the full guide watch:\u200F"), font=("Arial", 13, "bold")).pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT, padx=5)
         link_yt = tk.Label(yt_frame, text=self.T("▶️ לחצו כאן", "▶️ Click Here"), font=("Arial", 13, "underline"), fg="red", cursor="hand2")
         link_yt.pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT)
-        link_yt.bind("<Button-1>", lambda e: webbrowser.open_new("https://youtu.be/nVqI16Q7KBo")) 
+        link_yt.bind("<Button-1>", lambda e: webbrowser.open_new("https://www.youtube.com/")) 
 
     # --- מסכי המתנה ---
     def build_fullscreen_tab(self):
