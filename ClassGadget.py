@@ -8,6 +8,7 @@ import random
 import sys
 import datetime
 import subprocess
+import json
 from screeninfo import get_monitors
 import pygame
 import webbrowser
@@ -85,6 +86,8 @@ class ScrollableFrame(ttk.Frame):
         canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side="left", fill="both", expand=True); scrollbar.pack(side="right", fill="y")
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", lambda ev: canvas.yview_scroll(int(-1*(ev.delta/120)), "units")))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
 
 class AnimatedGif(tk.Label):
     def __init__(self, master, path, *args, **kwargs):
@@ -95,7 +98,12 @@ class AnimatedGif(tk.Label):
         except EOFError: pass
         self.delay = self.image.info.get('duration', 100); self.idx = 0; self.after_id = None; self.play()
     def play(self):
-        self.config(image=self.frames[self.idx]); self.idx = (self.idx + 1) % len(self.frames); self.after_id = self.after(self.delay, self.play)
+        if not self.winfo_exists(): return
+        try:
+            self.config(image=self.frames[self.idx]); self.idx = (self.idx + 1) % len(self.frames); self.after_id = self.after(self.delay, self.play)
+        except tk.TclError: pass
+    def stop(self):
+        if self.after_id: self.after_cancel(self.after_id); self.after_id = None
 
 class ClassGadgetApp:
     def __init__(self, root):
@@ -108,6 +116,7 @@ class ClassGadgetApp:
         self.music_vol_var = tk.DoubleVar(value=0.3); self.sfx_vol_var = tk.DoubleVar(value=0.7)
         self.messages_queue = []; self.current_msg_idx = 0; self.is_playing_messages = False
         self.custom_gifs = []; self.custom_sfx = []; self.polls_list = []
+        self.prompt_history = []
         self.media_durations = {} 
         
         self.global_duration_var = tk.StringVar(value="4")
@@ -118,37 +127,43 @@ class ClassGadgetApp:
         self.audio_toggles = {}
         self.is_minimized = False
         
-        self.normal_geometry = "840x700" 
+        self.normal_geometry = "1050x700"
         self.hide_window_var = tk.BooleanVar(value=False)
 
+        self.math_popup = None
         self.setup_zoomit_registry()
         self.load_existing_custom_files()
         self.build_ui()
+        keyboard.add_hotkey("ctrl+alt+0", lambda: self.root.after(0, self.close_all_popups))
+
+    def _run_silent(self, cmd):
+        subprocess.run(cmd, shell=True, creationflags=subprocess.CREATE_NO_WINDOW,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def setup_zoomit_registry(self):
         if sys.platform == "win32":
-            os.system("taskkill /f /im ZoomIt.exe >nul 2>&1")
-            os.system("taskkill /f /im ZoomIt64.exe >nul 2>&1")
-            
+            self._run_silent("taskkill /f /im ZoomIt.exe")
+            self._run_silent("taskkill /f /im ZoomIt64.exe")
+
             keys = {
-                "ToggleKey": 817,           # Ctrl+Shift+1 
-                "DrawToggleKey": 818,       # Ctrl+Shift+2 
-                "LiveZoomToggleKey": 819,   # Ctrl+Shift+3 
+                "ToggleKey": 817,
+                "DrawToggleKey": 818,
+                "LiveZoomToggleKey": 819,
                 "LiveZoomKey": 819,
-                "RecordToggleKey": 820,     # Ctrl+Shift+4 
+                "RecordToggleKey": 820,
                 "OptionsShown": 1,
                 "ShowTrayIcon": 1
             }
-            
+
             paths = [
                 r"HKCU\Software\Sysinternals\ZoomIt",
                 r"HKCU\Software\Sysinternals\ZoomIt64"
             ]
-            
+
             for path in paths:
-                os.system(f'reg add "{path}" /v EulaAccepted /t REG_DWORD /d 1 /f /reg:64 >nul 2>&1')
+                self._run_silent(f'reg add "{path}" /v EulaAccepted /t REG_DWORD /d 1 /f /reg:64')
                 for val_name, val_num in keys.items():
-                    os.system(f'reg add "{path}" /v {val_name} /t REG_DWORD /d {val_num} /f /reg:64 >nul 2>&1')
+                    self._run_silent(f'reg add "{path}" /v {val_name} /t REG_DWORD /d {val_num} /f /reg:64')
 
     def T(self, he, en): return he if self.lang == "HE" else en
     
@@ -160,31 +175,34 @@ class ClassGadgetApp:
     def toggle_minimize(self):
         if not self.is_minimized:
             self.normal_geometry = self.root.geometry()
+            cur_w = self.root.winfo_width()
+            self.top_frame.pack_forget()
             self.notebook.pack_forget()
-            self.root.geometry("840x45") 
+            self.root.geometry(f"{cur_w}x46")
             self.btn_minimize.config(text=self.T("➕ הרחב", "➕ Expand"), bg="#2ECC71", fg="black")
             self.is_minimized = True
         else:
-            self.root.geometry(self.normal_geometry)
+            self.top_frame.pack(fill=tk.X)
             self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+            self.root.geometry(self.normal_geometry)
             self.btn_minimize.config(text=self.T("➖ כווץ", "➖ Collapse"), bg="#E74C3C", fg="white")
             self.is_minimized = False
 
     def toggle_window_visibility(self):
         if sys.platform == "win32":
             try:
-                hwnd = int(self.root.wm_frame(), 16)
+                hwnd = int(self.root.wm_frame(), 0)
                 if self.hide_window_var.get():
-                    res = ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 17) 
-                    if res == 0: ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 1) 
+                    res = ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 17)
+                    if res == 0: ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 1)
                 else:
-                    ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0) 
-            except Exception as e:
+                    ctypes.windll.user32.SetWindowDisplayAffinity(hwnd, 0)
+            except Exception:
                 pass
 
     def build_ui(self):
         self.root.title("ClassGadget - Advanced Studio v1.0 Light")
-        self.root.geometry(self.normal_geometry); self.root.attributes("-topmost", self.always_on_top_var.get()) 
+        self.root.geometry(self.normal_geometry); self.root.minsize(0, 0); self.root.attributes("-topmost", self.always_on_top_var.get())
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         try: self.root.iconbitmap("icon.ico")
@@ -202,6 +220,7 @@ class ClassGadgetApp:
         
         self.btn_minimize = tk.Button(bar, text=self.T("➖ כווץ", "➖ Collapse"), bg="#E74C3C", fg="white", font=("Arial", 10, "bold"), bd=0, command=self.toggle_minimize)
         self.btn_minimize.pack(side=tk.RIGHT, padx=5)
+        tk.Button(bar, text=self.T("❌ סגור הכל", "❌ Close All"), bg="#8E44AD", fg="white", font=("Arial", 10, "bold"), bd=0, command=self.close_all_popups).pack(side=tk.RIGHT, padx=5)
         tk.Button(bar, text="🌐 HE/EN", bg="#555", fg="white", bd=0, command=self.switch_lang).pack(side=tk.RIGHT, padx=5)
         
         tk.Checkbutton(bar, text=self.T("👻 הסתר מזום (נסיוני)", "👻 Hide from Zoom"), variable=self.hide_window_var, bg="#333333", fg="#F1C40F", selectcolor="black", font=("Arial", 9, "bold"), command=self.toggle_window_visibility).pack(side=tk.RIGHT, padx=10)
@@ -213,7 +232,8 @@ class ClassGadgetApp:
         ttk.Scale(bar, from_=0.0, to=1.0, variable=self.master_vol_var, command=self.update_global_volume).pack(side=tk.LEFT)
         tk.Label(bar, text=self.T("🔊 מאסטר:\u200F", "🔊 Master:"), bg="#333333", fg="white").pack(side=tk.LEFT, padx=(5,2))
 
-        top_frame = tk.Frame(self.root, bg="#e6f2ff", pady=5); top_frame.pack(fill=tk.X)
+        self.top_frame = tk.Frame(self.root, bg="#e6f2ff", pady=5); self.top_frame.pack(fill=tk.X)
+        top_frame = self.top_frame
         self.monitors = get_monitors(); self.monitor_names = [f"{self.T('מסך', 'Screen')} {i+1} ({m.width}x{m.height})" for i, m in enumerate(self.monitors)]
         self.selected_monitor_var = tk.StringVar(self.root); self.selected_monitor_var.set(self.monitor_names[0])
         ttk.OptionMenu(top_frame, self.selected_monitor_var, self.monitor_names[0], *self.monitor_names).pack(side=tk.RIGHT)
@@ -224,38 +244,50 @@ class ClassGadgetApp:
         self.tab_regular = ttk.Frame(self.notebook); self.tab_effects = ttk.Frame(self.notebook)
         self.tab_screen = ttk.Frame(self.notebook); self.tab_sounds = ttk.Frame(self.notebook)
         self.tab_tools = ttk.Frame(self.notebook); self.tab_polls = ttk.Frame(self.notebook)
-        self.tab_games = ttk.Frame(self.notebook); self.tab_prompts = ttk.Frame(self.notebook) 
-        self.tab_fullscreen = ttk.Frame(self.notebook); self.tab_about = ttk.Frame(self.notebook)
+        self.tab_games = ttk.Frame(self.notebook); self.tab_prompts = ttk.Frame(self.notebook)
+        self.tab_fullscreen = ttk.Frame(self.notebook); self.tab_remote = ttk.Frame(self.notebook)
+        self.tab_about = ttk.Frame(self.notebook)
 
-        self.notebook.add(self.tab_regular, text=self.T("🎭 תמונות וגיפים", "🎭 Media & GIFs"))
+        self.notebook.add(self.tab_regular, text=self.T("🎭 גיפים", "🎭 GIFs"))
         self.notebook.add(self.tab_effects, text=self.T("✨ אפקטים", "✨ Effects"))
-        self.notebook.add(self.tab_screen, text=self.T("🖌️ כלי מסך וזום", "🖌️ Screen Tools"))
+        self.notebook.add(self.tab_screen, text=self.T("🖌️ מסך/זום", "🖌️ Screen"))
         self.notebook.add(self.tab_sounds, text=self.T("🔊 צלילים", "🔊 Sounds"))
-        self.notebook.add(self.tab_tools, text=self.T("📰 מבזקים ורולטה", "📰 Ticker & Roulette"))
+        self.notebook.add(self.tab_tools, text=self.T("📰 מבזק/רולטה", "📰 Ticker"))
         self.notebook.add(self.tab_polls, text=self.T("📊 סקרים", "📊 Polls"))
         self.notebook.add(self.tab_games, text=self.T("🎮 משחקים", "🎮 Games"))
         self.notebook.add(self.tab_prompts, text=self.T("🤖 פרומפטים", "🤖 Prompts"))
-        self.notebook.add(self.tab_fullscreen, text=self.T("📺 מסכי המתנה", "📺 Screensavers"))
+        self.notebook.add(self.tab_fullscreen, text=self.T("📺 המתנה", "📺 Screen"))
+        self.notebook.add(self.tab_remote, text=self.T("🎛️ שלט רחוק", "🎛️ Remote"))
         self.notebook.add(self.tab_about, text=self.T("ℹ️ אודות", "ℹ️ About"))
 
         self.build_shared_gif_config()
         self.build_regular_tab(); self.build_effects_tab(); self.build_screen_tools_tab()
         self.build_sounds_tab(); self.build_tools_tab(); self.build_polls_tab(); self.build_games_tab()
-        self.build_prompts_tab(); self.build_fullscreen_tab(); self.build_about_tab()
+        self.build_prompts_tab(); self.build_fullscreen_tab(); self.build_remote_tab(); self.build_about_tab()
 
         self.popup = None; self.firework_popups = []
         self.msg_popup = None; self.msg_job = None; self.roulette_popup = None
         self.fs_popup = None; self.fs_timer_job = None; self.fs_anim_jobs = []
         self.hangman_popup = None; self.scramble_popup = None; self.poll_popup = None
+        self.math_popup = None
 
     def on_closing(self):
         try: pygame.mixer.quit()
         except: pass
         if sys.platform == "win32":
-            os.system("taskkill /f /im ZoomIt.exe >nul 2>&1")
-            os.system("taskkill /f /im ZoomIt64.exe >nul 2>&1")
+            self._run_silent("taskkill /f /im ZoomIt.exe")
+            self._run_silent("taskkill /f /im ZoomIt64.exe")
         self.root.destroy()
         sys.exit(0)
+
+    def close_all_popups(self):
+        for p in [self.popup, self.msg_popup, self.roulette_popup,
+                  self.hangman_popup, self.scramble_popup, self.poll_popup, self.math_popup]:
+            try:
+                if p and p.winfo_exists(): p.destroy()
+            except Exception: pass
+        self.close_all_fireworks()
+        self.stop_msgs()
 
     def load_existing_custom_files(self):
         known_gifs = set([v[0]+".gif" for v in REGULAR_GIFS.values()] + [v[0]+f"{i}.gif" for v in REGULAR_GIFS.values() for i in range(1,7)] + [v['file']+".gif" for v in SPECIAL_EFFECTS_CONFIG.values()] + [v['file']+f"{i}.gif" for v in SPECIAL_EFFECTS_CONFIG.values() for i in range(1,7)])
@@ -377,10 +409,12 @@ class ClassGadgetApp:
             tk.Entry(f, textvariable=self.media_durations[pref], width=3, justify="center").pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT, padx=2)
             tk.Label(f, text="⏱️", font=("Segoe UI Emoji", 9)).pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT)
             
-            for i in range(1, 7): 
+            for i in range(1, 7):
                 fn = f"{pref if i==1 else pref+str(i-1)}.gif"
-                ttk.Button(f, text=str(i), width=3, style="Small.TButton", command=lambda f_n=fn, p=pref: self.trigger_gif(f_n, "center", self.get_sound_toggle(p).get(), self.media_durations[p])).pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT, padx=1)
-            
+                btn = ttk.Button(f, text=str(i), width=3, style="Small.TButton", command=lambda f_n=fn, p=pref: self.trigger_gif(f_n, "center", self.get_sound_toggle(p).get(), self.media_durations[p]))
+                btn.pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT, padx=1)
+                self.attach_gif_preview(btn, os.path.join(GIF_FOLDER, fn))
+
             ttk.Button(f, text="🎲", width=4, command=lambda p=pref: self.trigger_random_gif(p, "center", self.get_sound_toggle(p).get(), self.media_durations[p])).pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT, padx=5)
             
             if hk: keyboard.add_hotkey(hk, lambda p=pref: self.root.after(0, self.trigger_gif, f"{p}.gif", "center", self.get_sound_toggle(p).get(), self.media_durations[p]))
@@ -416,7 +450,9 @@ class ClassGadgetApp:
             tk.Label(f, text="⏱️", font=("Segoe UI Emoji", 9)).pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT)
             
             tk.Button(f, text="🗑️", bg="#ffcccc", bd=0, command=lambda n=fn: self.delete_custom_media(n, 'gif')).pack(side=tk.LEFT if self.lang=="HE" else tk.RIGHT, padx=5)
-            ttk.Button(f, text=self.T("הפעל", "Play"), command=lambda n=fn: self.trigger_gif(n, "center", self.get_sound_toggle(n).get(), self.media_durations[n])).pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT)
+            play_btn = ttk.Button(f, text=self.T("הפעל", "Play"), command=lambda n=fn: self.trigger_gif(n, "center", self.get_sound_toggle(n).get(), self.media_durations[n]))
+            play_btn.pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT)
+            self.attach_gif_preview(play_btn, os.path.join(GIF_FOLDER, fn))
 
     def build_effects_tab(self):
         ttk.Label(self.tab_effects, text=self.T("אפקטים מיוחדים וזיקוקים:\u200F", "Special Effects:\u200F")).pack(pady=5)
@@ -442,7 +478,9 @@ class ClassGadgetApp:
                     cmd = lambda f_n=fn, e=conf['effect'], p=p_key: self.trigger_gif(f_n, e, self.get_sound_toggle(p).get(), self.media_durations[p])
                 else:
                     cmd = lambda f_n=fn, p=p_key: self.trigger_fireworks(f_n, self.get_sound_toggle(p).get(), self.media_durations[p])
-                ttk.Button(f, text=str(i), width=3, style="Small.TButton", command=cmd).pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT, padx=1)
+                ebtn = ttk.Button(f, text=str(i), width=3, style="Small.TButton", command=cmd)
+                ebtn.pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT, padx=1)
+                self.attach_gif_preview(ebtn, os.path.join(GIF_FOLDER, fn))
                 
             if conf['type'] == "move":
                 cmd_rand = lambda p=p_key, e=conf['effect']: self.trigger_random_gif(p, e, self.get_sound_toggle(p).get(), self.media_durations[p])
@@ -462,7 +500,10 @@ class ClassGadgetApp:
         ss_frame = tk.LabelFrame(self.tab_screen, text=self.T("📸 צילום והקלטת מסך", "📸 Capture & Record"), font=("Arial", 12, "bold"), pady=10, padx=10)
         ss_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        tk.Label(ss_frame, text=self.T("הקבצים יישמרו אוטומטית בתיקיית recordings/", "Saved automatically to 'recordings/' folder"), font=("Arial", 11)).pack(pady=5)
+        lbl_row = tk.Frame(ss_frame); lbl_row.pack()
+        tk.Label(lbl_row, text=self.T("הקבצים יישמרו אוטומטית בתיקיית recordings/", "Saved automatically to 'recordings/' folder"), font=("Arial", 11)).pack(side=tk.LEFT, padx=5)
+        tk.Button(lbl_row, text=self.T("📂 פתח תיקייה", "📂 Open Folder"), font=("Arial", 10), bg="#3498DB", fg="white", bd=0,
+                  command=lambda: subprocess.Popen(f'explorer "{os.path.abspath(RECORDINGS_FOLDER)}"')).pack(side=tk.LEFT, padx=5)
         
         btn_f = tk.Frame(ss_frame); btn_f.pack()
         align_side = tk.RIGHT if self.lang == "HE" else tk.LEFT
@@ -532,7 +573,7 @@ class ClassGadgetApp:
             img = ImageGrab.grab(bbox=(target.x, target.y, target.x + target.width, target.y + target.height), all_screens=True)
             img.save(filename)
             self.play_sound("applause")
-            self.show_quiet_notification(self.T("מסך המצגת צולם ונשמר בתיקייה!", "Screenshot Saved!"))
+            self.show_quiet_notification(self.T("📸 מסך המצגת צולם! לחץ לפתיחה", "📸 Screenshot saved! Click to open"), filepath=os.path.abspath(filename))
         except Exception as e:
             messagebox.showerror("Error", f"Error:\n{e}")
 
@@ -573,9 +614,10 @@ class ClassGadgetApp:
         try:
             img = ImageGrab.grab(bbox=(x1, y1, x2, y2), all_screens=True)
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            img.save(os.path.join(RECORDINGS_FOLDER, f"Snip_{timestamp}.png"))
+            filepath = os.path.abspath(os.path.join(RECORDINGS_FOLDER, f"Snip_{timestamp}.png"))
+            img.save(filepath)
             self.play_sound("applause")
-            self.show_quiet_notification(self.T("החיתוך נשמר בתיקייה בהצלחה!", "Snip Saved!"))
+            self.show_quiet_notification(self.T("✂️ החיתוך נשמר! לחץ לפתיחה", "✂️ Snip saved! Click to open"), filepath=filepath)
         except Exception as e: messagebox.showerror("Error", f"Error:\n{e}")
 
     def set_zoomit_level(self, event=None):
@@ -672,15 +714,65 @@ class ClassGadgetApp:
             ttk.Button(f, text="SFX", style="Small.TButton", command=lambda n=fn: self.play_sound(n.split('.')[0])).pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT, padx=2)
             ttk.Button(f, text="BGM", style="Small.TButton", command=lambda n=fn: self.play_bgm(n.split('.')[0])).pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT, padx=2)
 
+    def save_session(self):
+        fp = filedialog.asksaveasfilename(
+            title=self.T("שמור מפגש", "Save Session"),
+            defaultextension=".json",
+            filetypes=[("ClassGadget Session", "*.json")]
+        )
+        if not fp: return
+        data = {
+            "messages": self.messages_queue,
+            "polls": self.polls_list,
+            "students": self.roulette_names_var.get(),
+        }
+        with open(fp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        self.show_quiet_notification(self.T("✅ המפגש נשמר!", "✅ Session saved!"))
+
+    def load_session(self):
+        fp = filedialog.askopenfilename(
+            title=self.T("טען מפגש", "Load Session"),
+            filetypes=[("ClassGadget Session", "*.json")]
+        )
+        if not fp: return
+        try:
+            with open(fp, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self.messages_queue = data.get("messages", [])
+            self.msg_listbox.delete(0, tk.END)
+            for m in self.messages_queue:
+                self.msg_listbox.insert(tk.END, f"[{m.get('type','')}] {m.get('text','')}")
+            self.polls_list = data.get("polls", [])
+            self.poll_lb.delete(0, tk.END)
+            for p in self.polls_list:
+                self.poll_lb.insert(tk.END, p.get("q", ""))
+            if data.get("students"):
+                self.roulette_names_var.set(data["students"])
+            self.show_quiet_notification(self.T("✅ המפגש נטען!", "✅ Session loaded!"))
+        except Exception as e:
+            messagebox.showerror(self.T("שגיאה", "Error"), str(e))
+
     def build_tools_tab(self):
         align = tk.RIGHT if self.lang == "HE" else tk.LEFT
+
+        # --- preset save/load bar ---
+        preset_f = tk.Frame(self.tab_tools, bg="#e8f4e8", pady=4, padx=8, relief="ridge", bd=1)
+        preset_f.pack(fill=tk.X, padx=10, pady=(6, 0))
+        tk.Label(preset_f, text=self.T("💾 מפגש:", "💾 Session:"), bg="#e8f4e8", font=("Arial", 10, "bold")).pack(side=align, padx=5)
+        tk.Button(preset_f, text=self.T("שמור", "Save"), bg="#27AE60", fg="white", font=("Arial", 10, "bold"), bd=0, padx=8, command=self.save_session).pack(side=align, padx=3)
+        tk.Button(preset_f, text=self.T("טען", "Load"), bg="#2980B9", fg="white", font=("Arial", 10, "bold"), bd=0, padx=8, command=self.load_session).pack(side=align, padx=3)
+
         f_roul = tk.LabelFrame(self.tab_tools, text=self.T("🎡 גלגל שמות", "🎡 Roulette"), font=("Arial", 11, "bold")); f_roul.pack(fill=tk.X, padx=10, pady=5)
         self.roulette_names_var = tk.StringVar(value="אבי, דנה, רון, שירה, משה"); ttk.Entry(f_roul, textvariable=self.roulette_names_var, font=("Arial", 12), style="RTL.TEntry").pack(fill=tk.X, padx=10, pady=5)
         ctrl_r = tk.Frame(f_roul); ctrl_r.pack()
         tk.Label(ctrl_r, text=self.T("צבע שם:\u200F", "Name Color:\u200F")).pack(side=align, padx=5)
         self.r_col_var = tk.StringVar(value="#FFD700")
         r_col_btn = tk.Button(ctrl_r, text="  ", bg=self.r_col_var.get(), width=4, relief="ridge", command=lambda: self.pick_color(self.r_col_var, r_col_btn)); r_col_btn.pack(side=align, padx=5)
+        self.r_remove_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(ctrl_r, text=self.T("הסר לאחר הגרלה", "Remove after pick"), variable=self.r_remove_var).pack(side=align, padx=8)
         ttk.Button(ctrl_r, text=self.T("🎲 הגרל תלמיד!", "🎲 Spin!"), command=self.start_roulette).pack(side=align, padx=10)
+        ttk.Button(ctrl_r, text=self.T("↺ אפס רשימה", "↺ Reset List"), command=self.reset_roulette_pool).pack(side=align, padx=5)
 
         f_msg = tk.LabelFrame(self.tab_tools, text=self.T("📰 מבזק חדשות מתקדם", "📰 Advanced Ticker"), font=("Arial", 11, "bold")); f_msg.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         form = tk.Frame(f_msg); form.pack(fill=tk.X, padx=5, pady=5)
@@ -830,32 +922,46 @@ class ClassGadgetApp:
         except: pass
         return []
         
+    def reset_roulette_pool(self):
+        self.roulette_pool = []
+        self.show_quiet_notification(self.T("✅ רשימת ההגרלה אופסה!", "✅ Roulette pool reset!"))
+
     def start_roulette(self):
-        fn = self.load_students_from_file(); self.roulette_names = fn if fn else [n.strip() for n in self.roulette_names_var.get().split(',') if n.strip()]
+        full_list = self.load_students_from_file() or [n.strip() for n in self.roulette_names_var.get().split(',') if n.strip()]
+        if not hasattr(self, 'roulette_pool') or not self.roulette_pool:
+            self.roulette_pool = list(full_list)
+        self.roulette_names = list(self.roulette_pool)
+        if len(self.roulette_names) < 2: self.roulette_pool = list(full_list); self.roulette_names = list(full_list)
         if len(self.roulette_names) < 2: return
         if self.roulette_popup and self.roulette_popup.winfo_exists(): self.roulette_popup.destroy()
         self.roulette_popup = tk.Toplevel(self.root); self.roulette_popup.overrideredirect(True); self.roulette_popup.attributes("-topmost", True)
         self.roulette_popup.attributes("-transparentcolor", TRANSPARENT_COLOR); self.roulette_popup.config(bg=TRANSPARENT_COLOR)
-        
+
         self.roulette_label = tk.Label(self.roulette_popup, text="🎲 מערבב...", font=("Arial", 70, "bold"), fg="#00FFFF", bg=TRANSPARENT_COLOR); self.roulette_label.pack(pady=20, padx=20)
         self.roulette_popup.update_idletasks()
         self.roulette_popup.update()
         t = self.get_target_monitor(); w, h = self.roulette_popup.winfo_reqwidth(), self.roulette_popup.winfo_reqheight()
         self.roulette_popup.geometry(f'+{int(t.x + (t.width/2) - (w/2))}+{int(t.y + (t.height/2) - (h/2))}')
         self.play_sound("drumroll")
+        self.roulette_winner = random.choice(self.roulette_names)
         self.roulette_ticks = 0; self.roulette_delay = 50; self.spin_roulette()
-        
+
     def spin_roulette(self):
         if not self.roulette_popup or not self.roulette_popup.winfo_exists(): return
         self.roulette_label.config(text=f"{random.choice(['⚀','⚁','⚂','⚃','⚄','⚅'])}  {random.choice(self.roulette_names)}  {random.choice(['⚀','⚁','⚂','⚃','⚄','⚅'])}")
         self.roulette_ticks += 1
-        if self.roulette_ticks < 30: 
+        if self.roulette_ticks < 30:
             self.roulette_delay += int(self.roulette_ticks / 2)
             self.roulette_job = self.root.after(self.roulette_delay, self.spin_roulette)
-        else: 
-            self.roulette_label.config(text=f"⭐ {random.choice(self.roulette_names)} ⭐", fg=self.r_col_var.get(), font=("Arial", 120, "bold"))
+        else:
+            self.roulette_label.config(text=f"⭐ {self.roulette_winner} ⭐", fg=self.r_col_var.get(), font=("Arial", 120, "bold"))
             self.play_sound("tada")
             self.play_sound("applause")
+            if self.r_remove_var.get() and hasattr(self, 'roulette_pool') and self.roulette_winner in self.roulette_pool:
+                self.roulette_pool.remove(self.roulette_winner)
+                remaining = len(self.roulette_pool)
+                suffix = self.T(f" | נותרו: {remaining}", f" | Remaining: {remaining}")
+                self.roulette_label.config(text=f"⭐ {self.roulette_winner} ⭐{suffix}")
             self.root.after(6000, lambda: self.roulette_popup.destroy() if self.roulette_popup else None)
 
     # --- סקרים ---
@@ -951,19 +1057,38 @@ class ClassGadgetApp:
     def poll_nav(self, direction):
         if not self.polls_list: return
         self.current_poll_idx = (self.current_poll_idx + direction) % len(self.polls_list)
-        self.render_poll_content(); self.play_sound("spring")
+        self.render_poll_content(); self.play_sound("tada")
 
     def render_poll_content(self):
         if not self.poll_popup or not self.poll_popup.winfo_exists() or not self.polls_list: return
         for w in self.poll_content_frame.winfo_children(): w.destroy()
         p_data = self.polls_list[self.current_poll_idx]; t = self.get_target_monitor()
+        if "counts" not in p_data or len(p_data["counts"]) != len(p_data["opts"]):
+            p_data["counts"] = [0] * len(p_data["opts"])
         tk.Label(self.poll_content_frame, text=p_data["q"], font=("Arial", 60, "bold"), fg="#F1C40F", bg="#2C3E50", wraplength=t.width-100 if not self.poll_movable_var.get() else 700).pack(pady=40)
         colors = ["#3498DB", "#E74C3C", "#2ECC71", "#9B59B6", "#E67E22", "#1ABC9C"]
         for i, opt in enumerate(p_data["opts"]):
-            of = tk.Frame(self.poll_content_frame, bg="#2C3E50"); of.pack(fill=tk.X, pady=10)
+            of = tk.Frame(self.poll_content_frame, bg="#2C3E50"); of.pack(fill=tk.X, pady=6)
             align = tk.RIGHT if self.lang == "HE" else tk.LEFT
-            tk.Label(of, text=f"{i+1}.", font=("Arial", 40, "bold"), fg=colors[i%len(colors)], bg="#2C3E50").pack(side=align, padx=20)
-            tk.Label(of, text=opt, font=("Arial", 40), fg="white", bg="#2C3E50").pack(side=align)
+            c = colors[i % len(colors)]
+            tk.Label(of, text=f"{i+1}.", font=("Arial", 36, "bold"), fg=c, bg="#2C3E50").pack(side=align, padx=10)
+            tk.Label(of, text=opt, font=("Arial", 36), fg="white", bg="#2C3E50").pack(side=align, padx=5)
+            count_var = tk.IntVar(value=p_data["counts"][i])
+            count_lbl = tk.Label(of, textvariable=count_var, font=("Arial", 36, "bold"), fg=c, bg="#2C3E50", width=3)
+            count_lbl.pack(side=tk.LEFT if self.lang=="HE" else tk.RIGHT, padx=8)
+            def make_add(idx=i, cv=count_var, pd=p_data):
+                def _add():
+                    pd["counts"][idx] += 1; cv.set(pd["counts"][idx])
+                return _add
+            def make_sub(idx=i, cv=count_var, pd=p_data):
+                def _sub():
+                    if pd["counts"][idx] > 0: pd["counts"][idx] -= 1; cv.set(pd["counts"][idx])
+                return _sub
+            tk.Button(of, text="➕", font=("Arial", 20), bg=c, fg="white", bd=0, width=2, command=make_add()).pack(side=tk.LEFT if self.lang=="HE" else tk.RIGHT, padx=2)
+            tk.Button(of, text="➖", font=("Arial", 20), bg="#555", fg="white", bd=0, width=2, command=make_sub()).pack(side=tk.LEFT if self.lang=="HE" else tk.RIGHT, padx=2)
+        reset_f = tk.Frame(self.poll_content_frame, bg="#2C3E50"); reset_f.pack(pady=8)
+        tk.Button(reset_f, text=self.T("↺ אפס ספירה", "↺ Reset Counts"), font=("Arial", 14), bg="#555", fg="white", bd=0,
+                  command=lambda pd=p_data: [pd["counts"].__setitem__(j, 0) or None for j in range(len(pd["counts"]))] or self.render_poll_content()).pack()
 
     # --- משחקים ---
     def build_games_tab(self):
@@ -1076,7 +1201,7 @@ class ClassGadgetApp:
         t = self.get_target_monitor(); self.scramble_popup.geometry(f'900x400+{int(t.x + (t.width/2) - 450)}+{int(t.y + (t.height/2) - 200)}')
         tk.Label(self.scramble_popup, text=self.T("מה מסתתר כאן?", "What's hiding here?"), font=("Arial", 40, "bold"), fg="#F1C40F", bg="#8E44AD").pack(pady=30)
         self.sc_word_label = tk.Label(self.scramble_popup, text=final_scramble, font=("Arial", 60, "bold"), fg="white", bg="#8E44AD", wraplength=850); self.sc_word_label.pack(pady=20)
-        self.play_sound("spring")
+        self.play_sound("tada")
 
     def reveal_scramble(self):
         if self.scramble_popup and self.scramble_popup.winfo_exists():
@@ -1174,7 +1299,7 @@ class ClassGadgetApp:
         tk.Label(self.math_popup, text=self.T("מי פותר ראשון? 🤔", "Who solves first? 🤔"), font=("Arial", 40, "bold"), fg="#F1C40F", bg="#16A085").pack(pady=20)
         self.math_lbl = tk.Label(self.math_popup, text=self.math_q_str, font=("Arial", 50, "bold"), fg="white", bg="#16A085", justify="center")
         self.math_lbl.pack(pady=10)
-        self.play_sound("spring")
+        self.play_sound("tada")
         
     def reveal_math(self):
         if hasattr(self, 'math_popup') and self.math_popup.winfo_exists():
@@ -1233,10 +1358,14 @@ class ClassGadgetApp:
         )
         tk.Label(self.tab_prompts, text=("\u202B" if self.lang=="HE" else "") + warning_text, fg="blue", font=("Arial", 11, "bold"), justify="right" if self.lang=="HE" else "left").pack(pady=5, padx=20)
 
-        self.prompt_output = tk.Text(self.tab_prompts, height=10, width=80, font=("Arial", 11), bg="#f9f9f9", relief="solid", bd=1)
+        self.prompt_output = tk.Text(self.tab_prompts, height=8, width=80, font=("Arial", 11), bg="#f9f9f9", relief="solid", bd=1)
         self.prompt_output.pack(padx=10, pady=5)
-        
+
         tk.Button(self.tab_prompts, text=self.T("📋 העתק פרומפט", "📋 Copy Prompt"), font=("Arial", 10), command=self.copy_prompt).pack(pady=5)
+
+        self.prompt_history_frame = tk.LabelFrame(self.tab_prompts, text=self.T("🕐 היסטוריה (5 אחרונים)", "🕐 History (last 5)"), font=("Arial", 9, "bold"))
+        self.prompt_history_frame.pack(fill=tk.X, padx=10, pady=(0, 6))
+        self._refresh_prompt_history_ui()
 
     def update_prompt_warning(self, event=None):
         ptype = self.prompt_type_var.get()
@@ -1245,35 +1374,68 @@ class ClassGadgetApp:
         else:
             self.prompt_warning_lbl.config(text="")
 
+    def _refresh_prompt_history_ui(self):
+        if not hasattr(self, 'prompt_history_frame'): return
+        for w in self.prompt_history_frame.winfo_children(): w.destroy()
+        if not self.prompt_history:
+            tk.Label(self.prompt_history_frame, text=self.T("עדיין לא נוצרו פרומפטים", "No prompts generated yet"), fg="gray", font=("Arial", 9)).pack(pady=2)
+            return
+        for entry in self.prompt_history:
+            row = tk.Frame(self.prompt_history_frame); row.pack(fill=tk.X, pady=1, padx=4)
+            tk.Label(row, text=entry["label"], font=("Arial", 9), anchor="e" if self.lang=="HE" else "w",
+                     width=55, fg="#333").pack(side=tk.RIGHT if self.lang=="HE" else tk.LEFT)
+            tk.Button(row, text=self.T("📋 טען", "📋 Load"), font=("Arial", 8), bg="#BDC3C7", bd=0, padx=4,
+                      command=lambda t=entry["text"]: (self.prompt_output.delete("1.0", tk.END),
+                                                       self.prompt_output.insert(tk.END, t))).pack(side=tk.LEFT if self.lang=="HE" else tk.RIGHT, padx=3)
+
     def generate_prompt(self):
         ptype = self.prompt_type_var.get()
         subject = self.prompt_subject_var.get().strip() or self.T("[הכנס נושא כאן]", "[Insert Subject]")
         style = self.prompt_style_var.get().strip() or self.T("סגנון חופשי", "Free Style")
         details = self.prompt_details_var.get().strip() or self.T("אין בקשות מיוחדות.", "No special requests.")
-        
+
         template = PROMPT_TEMPLATES.get(ptype, "")
         final_prompt = template.format(subject=subject, style=style, details=details)
-        
+
         self.prompt_output.delete("1.0", tk.END)
         self.prompt_output.insert(tk.END, final_prompt)
         self.prompt_output.tag_configure("align", justify='right' if self.lang=="HE" else "left")
         self.prompt_output.tag_add("align", "1.0", "end")
 
-    def show_quiet_notification(self, message, duration=1500):
+        label = f"[{ptype}] {subject}"
+        self.prompt_history = ([{"label": label, "text": final_prompt}] + self.prompt_history)[:5]
+        self._refresh_prompt_history_ui()
+
+    def show_quiet_notification(self, message, duration=1500, filepath=None):
         notif = tk.Toplevel(self.root)
         notif.overrideredirect(True)
         notif.attributes("-topmost", True)
         notif.config(bg="#2ECC71", bd=2, relief="solid")
-        
-        tk.Label(notif, text=message, font=("Arial", 12, "bold"), bg="#2ECC71", fg="white", padx=20, pady=10).pack()
-        
+
+        def _open_and_close():
+            if filepath and os.path.exists(filepath):
+                os.startfile(filepath)
+            notif.destroy()
+
+        lbl = tk.Label(notif, text=message, font=("Arial", 12, "bold"), bg="#2ECC71", fg="white", padx=20, pady=10)
+        lbl.pack()
+        if filepath:
+            hint = tk.Label(notif, text=self.T("לחץ לפתיחת הקובץ", "Click to open file"),
+                            font=("Arial", 9), bg="#27AE60", fg="white", pady=2)
+            hint.pack(fill=tk.X)
+            notif.config(cursor="hand2")
+            lbl.config(cursor="hand2")
+            notif.bind("<Button-1>", lambda e: _open_and_close())
+            lbl.bind("<Button-1>", lambda e: _open_and_close())
+            hint.bind("<Button-1>", lambda e: _open_and_close())
+
         notif.update_idletasks()
         w, h = notif.winfo_reqwidth(), notif.winfo_reqheight()
         x = self.root.winfo_x() + (self.root.winfo_width() // 2) - (w // 2)
         y = self.root.winfo_y() + (self.root.winfo_height() // 2) - (h // 2)
         notif.geometry(f"+{x}+{y}")
-        
-        self.root.after(duration, notif.destroy)
+
+        self.root.after(duration if not filepath else 4000, lambda: notif.destroy() if notif.winfo_exists() else None)
 
     def copy_prompt(self):
         txt = self.prompt_output.get("1.0", tk.END).strip()
@@ -1281,6 +1443,122 @@ class ClassGadgetApp:
             self.root.clipboard_clear()
             self.root.clipboard_append(txt)
             self.show_quiet_notification(self.T("✅ הפרומפט הועתק בהצלחה!", "✅ Prompt Copied!"))
+
+    # --- שלט רחוק ---
+    def build_remote_tab(self):
+        outer = tk.Frame(self.tab_remote)
+        outer.pack(fill=tk.BOTH, expand=True)
+
+        canvas = tk.Canvas(outer)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        inner = tk.Frame(canvas)
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win_id, width=e.width))
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
+
+        tk.Label(inner, text=self.T("🎛️ שלט רחוק לכלי ועידה", "🎛️ Meeting Remote Control"),
+                 font=("Arial", 14, "bold"), fg="#2C3E50").pack(pady=(10, 2))
+        tk.Label(inner, text=self.T("לחץ על כפתור כדי לשלוח קיצור המקלדת לתוכנת הוועידה הפעילה",
+                                     "Click a button to send the keyboard shortcut to the active meeting app"),
+                 font=("Arial", 9), fg="gray").pack(pady=(0, 8))
+
+        def remote_btn(parent, label, hotkey, bg="#2C3E50", fg="white", tooltip=None):
+            f = tk.Frame(parent)
+            f.pack(side=tk.LEFT, padx=4, pady=4)
+            def fire():
+                try: keyboard.send(hotkey)
+                except Exception: pass
+            b = tk.Button(f, text=label, bg=bg, fg=fg,
+                          font=("Arial", 10, "bold"), width=18, height=2,
+                          relief="raised", bd=2, cursor="hand2", command=fire)
+            b.pack()
+            if tooltip:
+                tk.Label(f, text=tooltip, font=("Arial", 7), fg="#666").pack()
+
+        def section(parent, title, color):
+            sec = tk.LabelFrame(inner, text=title,
+                                font=("Arial", 12, "bold"), fg=color,
+                                padx=8, pady=8, bd=2, relief="groove")
+            sec.pack(fill=tk.X, padx=10, pady=6)
+            return sec
+
+        def btn_row(parent, buttons):
+            row = tk.Frame(parent)
+            row.pack(fill=tk.X, pady=2)
+            for (lbl, hk, bg, tip) in buttons:
+                remote_btn(row, lbl, hk, bg=bg, tooltip=tip)
+
+        # ── ZOOM ──────────────────────────────────────────────────────────────
+        z = section(inner, self.T("🎥 זום (Zoom)", "🎥 Zoom"), "#1565C0")
+
+        btn_row(z, [
+            (self.T("🔇 השתק עצמי / בטל השתקה", "🔇 Mute/Unmute Self"),   "alt+a", "#1565C0", "Alt+A"),
+            (self.T("📹 הפעל/כבה מצלמה",           "📹 Start/Stop Video"),  "alt+v", "#1976D2", "Alt+V"),
+            (self.T("🖥️ שתף מסך",                   "🖥️ Share Screen"),      "alt+s", "#0288D1", "Alt+S"),
+        ])
+        btn_row(z, [
+            (self.T("⏸️ השהה/המשך שיתוף",           "⏸️ Pause/Resume Share"), "alt+t", "#0277BD", "Alt+T"),
+            (self.T("🎙️ השתק את כולם",              "🎙️ Mute All"),           "alt+m", "#C62828", "Alt+M"),
+            (self.T("🎙️ בטל השתקת כולם",            "🎙️ Unmute All Request"), "alt+m", "#2E7D32", "Alt+M"),
+        ])
+        btn_row(z, [
+            (self.T("✋ הרם/הורד יד",               "✋ Raise/Lower Hand"),   "alt+y", "#6A1B9A", "Alt+Y"),
+            (self.T("👥 פתח רשימת משתתפים",         "👥 Participants Panel"), "alt+u", "#37474F", "Alt+U"),
+            (self.T("💬 פתח צ'אט",                  "💬 Open Chat"),          "alt+h", "#37474F", "Alt+H"),
+        ])
+        btn_row(z, [
+            (self.T("⏺️ התחל/עצור הקלטה",          "⏺️ Start/Stop Recording"), "alt+r", "#BF360C", "Alt+R"),
+            (self.T("🔄 החלף מצלמה",               "🔄 Switch Camera"),       "alt+n", "#4527A0", "Alt+N"),
+            (self.T("🖼️ תצוגת גלריה",              "🖼️ Gallery View"),        "alt+f2", "#1A237E", "Alt+F2"),
+        ])
+        btn_row(z, [
+            (self.T("🗣️ תצוגת דובר",               "🗣️ Speaker View"),        "alt+f1", "#1A237E", "Alt+F1"),
+            (self.T("⛶ מסך מלא",                   "⛶ Full Screen"),          "alt+f",  "#263238", "Alt+F"),
+        ])
+
+        # ── GOOGLE MEET ───────────────────────────────────────────────────────
+        m = section(inner, self.T("🟢 Google Meet", "🟢 Google Meet"), "#1B5E20")
+
+        btn_row(m, [
+            (self.T("🔇 השתק/בטל מיקרופון",        "🔇 Mute/Unmute Mic"),    "ctrl+d",       "#1B5E20", "Ctrl+D"),
+            (self.T("📹 הפעל/כבה מצלמה",           "📹 Start/Stop Video"),    "ctrl+e",       "#2E7D32", "Ctrl+E"),
+            (self.T("🖥️ שתף מסך",                  "🖥️ Present Screen"),      "ctrl+alt+s",   "#33691E", "Ctrl+Alt+S"),
+        ])
+        btn_row(m, [
+            (self.T("✋ הרם/הורד יד",              "✋ Raise/Lower Hand"),    "ctrl+alt+h",   "#558B2F", "Ctrl+Alt+H"),
+            (self.T("💬 פתח צ'אט",                 "💬 Open Chat"),           "ctrl+alt+c",   "#37474F", "Ctrl+Alt+C"),
+            (self.T("👥 הצג משתתפים",              "👥 Show Participants"),   "ctrl+alt+p",   "#37474F", "Ctrl+Alt+P"),
+        ])
+        btn_row(m, [
+            (self.T("📝 כתוביות",                  "📝 Toggle Captions"),     "c",            "#795548", "C"),
+            (self.T("🚪 עזוב שיחה",               "🚪 Leave Call"),           "ctrl+alt+l",   "#B71C1C", "Ctrl+Alt+L"),
+        ])
+
+        # ── MICROSOFT TEAMS ───────────────────────────────────────────────────
+        t = section(inner, self.T("🟣 Microsoft Teams", "🟣 Microsoft Teams"), "#4527A0")
+
+        btn_row(t, [
+            (self.T("🔇 השתק/בטל השתקה",          "🔇 Mute/Unmute"),         "ctrl+shift+m", "#4527A0", "Ctrl+Shift+M"),
+            (self.T("📹 הפעל/כבה מצלמה",          "📹 Start/Stop Video"),    "ctrl+shift+o", "#512DA8", "Ctrl+Shift+O"),
+            (self.T("🖥️ שתף מסך",                 "🖥️ Share Screen"),        "ctrl+shift+e", "#311B92", "Ctrl+Shift+E"),
+        ])
+        btn_row(t, [
+            (self.T("✋ הרם/הורד יד",             "✋ Raise/Lower Hand"),    "ctrl+shift+k", "#6A1B9A", "Ctrl+Shift+K"),
+            (self.T("💬 פתח צ'אט",                "💬 Open Chat"),           "ctrl+shift+c", "#37474F", "Ctrl+Shift+C"),
+            (self.T("🌫️ טשטוש רקע",              "🌫️ Background Blur"),     "ctrl+shift+p", "#263238", "Ctrl+Shift+P"),
+        ])
+        btn_row(t, [
+            (self.T("⌨️ כל קיצורי הדרך",         "⌨️ All Shortcuts"),       "ctrl+.",       "#455A64", "Ctrl+."),
+        ])
+
+        # ── כפתור סגור הכל ────────────────────────────────────────────────────
+        tk.Button(inner, text=self.T("❌ סגור את כל הפופאפים (Ctrl+Alt+0)", "❌ Close All Popups (Ctrl+Alt+0)"),
+                  bg="#8E44AD", fg="white", font=("Arial", 11, "bold"),
+                  command=self.close_all_popups).pack(pady=12, ipadx=10, ipady=5)
 
     # --- אודות ---
     def build_about_tab(self):
@@ -1520,6 +1798,49 @@ class ClassGadgetApp:
             except: pass
             finally:
                 self.fs_popup.destroy()
+
+    # --- תצוגה מקדימה של גיפים ---
+    def attach_gif_preview(self, widget, gif_path):
+        preview_win = [None]
+
+        def show(event):
+            if preview_win[0] and preview_win[0].winfo_exists():
+                return
+            if not os.path.exists(gif_path):
+                return
+            try:
+                win = tk.Toplevel(self.root)
+                win.overrideredirect(True)
+                win.attributes("-topmost", True)
+                if gif_path.lower().endswith(".gif"):
+                    lbl = AnimatedGif(win, gif_path, bg="#222222")
+                else:
+                    img = Image.open(gif_path)
+                    img.thumbnail((200, 200))
+                    ph = ImageTk.PhotoImage(img)
+                    lbl = tk.Label(win, image=ph, bg="#222222")
+                    lbl.image = ph
+                lbl.pack(padx=4, pady=4)
+                win.update_idletasks()
+                w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+                x = min(event.x_root + 12, self.root.winfo_screenwidth() - w - 10)
+                y = min(event.y_root + 12, self.root.winfo_screenheight() - h - 10)
+                win.geometry(f"+{x}+{y}")
+                preview_win[0] = win
+            except Exception:
+                pass
+
+        def hide(event):
+            if preview_win[0]:
+                try:
+                    if preview_win[0].winfo_exists():
+                        preview_win[0].destroy()
+                except Exception:
+                    pass
+                preview_win[0] = None
+
+        widget.bind("<Enter>", show)
+        widget.bind("<Leave>", hide)
 
     # --- אודיו מתקדם ---
     def find_audio_file(self, basename):
